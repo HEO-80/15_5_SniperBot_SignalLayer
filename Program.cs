@@ -14,6 +14,7 @@ namespace _15_5_SniperBot_SignalLayer
             Env.Load();
             Logger.Init();
 
+            Logger.MinLevel = LogLevel.RAW;
             decimal GetDec(string key, decimal def) =>
                 decimal.TryParse(Environment.GetEnvironmentVariable(key),
                     System.Globalization.NumberStyles.Any,
