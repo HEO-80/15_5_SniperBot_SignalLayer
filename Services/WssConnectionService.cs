@@ -15,14 +15,21 @@ namespace _15_5_SniperBot_SignalLayer.Services
         private readonly string _wssUrl;
         private readonly SignalEngine _signalEngine;
 
-        // Aerodrome V2 Router en Base
-        private const string AERODROME_ROUTER  = "0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43";
-        // topic0 del evento Swap(address,address,int256,int256,uint160,uint128,int24)
-        private const string TOPIC0_SWAP       = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
+        // Aerodrome V2 Basic pools — topic0 evento Swap
+        // Swap(address sender, address to, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out)
+        private const string TOPIC0_SWAP_V2 = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822";
+
+        // WETH en Base — para filtrar solo pools con WETH
+        private const string WETH_BASE = "0x4200000000000000000000000000000000000006";
+
+        // // Aerodrome V2 Router en Base
+        // private const string AERODROME_ROUTER  = "0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43";
+        // // topic0 del evento Swap(address,address,int256,int256,uint160,uint128,int24)
+        // private const string TOPIC0_SWAP       = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
 
         public WssConnectionService(string wssUrl, SignalEngine signalEngine)
         {
-            _wssUrl       = wssUrl;
+            _wssUrl = wssUrl;
             _signalEngine = signalEngine;
         }
 
@@ -52,8 +59,8 @@ namespace _15_5_SniperBot_SignalLayer.Services
             var subscribeMsg = JsonSerializer.Serialize(new
             {
                 jsonrpc = "2.0",
-                id      = 1,
-                method  = "eth_subscribe",
+                id = 1,
+                method = "eth_subscribe",
                 @params = new object[] { "logs", new { } }
             });
 
@@ -65,7 +72,7 @@ namespace _15_5_SniperBot_SignalLayer.Services
 
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
-                var sb     = new StringBuilder();
+                var sb = new StringBuilder();
                 WebSocketReceiveResult result;
 
                 do
@@ -94,11 +101,11 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 if (!paramsEl.TryGetProperty("result", out var logEl)) return;
 
                 // Extraer campos del log
-                if (!logEl.TryGetProperty("address", out var addrEl))   return;
-                if (!logEl.TryGetProperty("topics",  out var topicsEl)) return;
+                if (!logEl.TryGetProperty("address", out var addrEl)) return;
+                if (!logEl.TryGetProperty("topics", out var topicsEl)) return;
 
                 var address = addrEl.GetString()?.ToLower() ?? "";
-                var topics  = new List<string>();
+                var topics = new List<string>();
 
                 foreach (var t in topicsEl.EnumerateArray())
                     topics.Add(t.GetString()?.ToLower() ?? "");
@@ -109,8 +116,14 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 Logger.Raw($"[WSS-RAW] address={address} | topic0={topics[0]}");
 
                 // Filtro manual: solo Aerodrome router + evento Swap
-                if (address != AERODROME_ROUTER) return;
-                if (topics[0] != TOPIC0_SWAP)    return;
+                // if (address != AERODROME_ROUTER) return;
+                // if (topics[0] != TOPIC0_SWAP)    return;
+
+                // Filtro: solo eventos Swap de Aerodrome V2 Basic
+                if (topics[0] != TOPIC0_SWAP_V2) return;
+
+                // Solo si involucra WETH (address del token o pool relacionado)
+                // Por ahora dejamos pasar todos los Swap V2 y filtramos después
 
                 // Extraer data del swap
                 var dataStr = logEl.TryGetProperty("data", out var dataEl)
@@ -129,10 +142,10 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 decimal amount0 = 0, amount1 = 0;
                 if (dataStr.Length >= 130)
                 {
-                    var hex0 = dataStr.Substring(2,  64);
+                    var hex0 = dataStr.Substring(2, 64);
                     var hex1 = dataStr.Substring(66, 64);
-                    amount0  = ParseHexToDecimal(hex0);
-                    amount1  = ParseHexToDecimal(hex1);
+                    amount0 = ParseHexToDecimal(hex0);
+                    amount1 = ParseHexToDecimal(hex1);
                 }
 
                 // Determinar dirección del swap (buy = amount0 negativo en Aerodrome V2)
@@ -140,13 +153,13 @@ namespace _15_5_SniperBot_SignalLayer.Services
 
                 var swapEvent = new SwapEvent
                 {
-                    PoolAddress  = poolAddress,
+                    PoolAddress = poolAddress,
                     TokenAddress = poolAddress, // se enriquece después con DexScreener
                     WalletSender = sender,
-                    AmountIn     = Math.Abs(isBuy ? amount1 : amount0),
-                    AmountOut    = Math.Abs(isBuy ? amount0 : amount1),
-                    IsBuy        = isBuy,
-                    Timestamp    = DateTime.UtcNow
+                    AmountIn = Math.Abs(isBuy ? amount1 : amount0),
+                    AmountOut = Math.Abs(isBuy ? amount0 : amount1),
+                    IsBuy = isBuy,
+                    Timestamp = DateTime.UtcNow
                 };
 
                 Logger.Debug($"[SWAP] pool={poolAddress[..10]}... | " +
