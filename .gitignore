@@ -1,0 +1,7 @@
+@"
+bin/
+obj/
+logs/
+.env
+*.user
+"@ | Out-File -FilePath ..\.gitignore -Encoding utf8
