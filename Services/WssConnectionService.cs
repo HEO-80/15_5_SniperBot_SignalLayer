@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using _15_5_SniperBot_SignalLayer.Models;
-using _15_5_SniperBot_SignalLayer.Services;
 
 namespace _15_5_SniperBot_SignalLayer.Services
 {
@@ -15,21 +14,16 @@ namespace _15_5_SniperBot_SignalLayer.Services
         private readonly string _wssUrl;
         private readonly SignalEngine _signalEngine;
 
-        // Aerodrome V2 Basic pools — topic0 evento Swap
+        // Aerodrome V2 Basic — topic0 evento Swap
         // Swap(address sender, address to, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out)
         private const string TOPIC0_SWAP_V2 = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822";
 
-        // WETH en Base — para filtrar solo pools con WETH
+        // WETH en Base
         private const string WETH_BASE = "0x4200000000000000000000000000000000000006";
-
-        // // Aerodrome V2 Router en Base
-        // private const string AERODROME_ROUTER  = "0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43";
-        // // topic0 del evento Swap(address,address,int256,int256,uint160,uint128,int24)
-        // private const string TOPIC0_SWAP       = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67";
 
         public WssConnectionService(string wssUrl, SignalEngine signalEngine)
         {
-            _wssUrl = wssUrl;
+            _wssUrl       = wssUrl;
             _signalEngine = signalEngine;
         }
 
@@ -55,12 +49,12 @@ namespace _15_5_SniperBot_SignalLayer.Services
             await ws.ConnectAsync(new Uri(_wssUrl), ct);
             Logger.Success("🟢 WSS conectado a Base Mainnet");
 
-            // Suscribirse a TODOS los logs (Alchemy ignora filtros server-side)
+            // Suscribirse a TODOS los logs sin filtro server-side
             var subscribeMsg = JsonSerializer.Serialize(new
             {
                 jsonrpc = "2.0",
-                id = 1,
-                method = "eth_subscribe",
+                id      = 1,
+                method  = "eth_subscribe",
                 @params = new object[] { "logs", new { } }
             });
 
@@ -68,7 +62,7 @@ namespace _15_5_SniperBot_SignalLayer.Services
             await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
             Logger.Info("[WSS] Suscripción enviada — escuchando logs de Base Mainnet...");
 
-            var buffer = new byte[4096];
+            var buffer = new byte[8192];
 
             while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
@@ -96,74 +90,65 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 using var doc = JsonDocument.Parse(raw);
                 var root = doc.RootElement;
 
-                // Ignorar mensajes de confirmación de suscripción
                 if (!root.TryGetProperty("params", out var paramsEl)) return;
                 if (!paramsEl.TryGetProperty("result", out var logEl)) return;
 
-                // Extraer campos del log
-                if (!logEl.TryGetProperty("address", out var addrEl)) return;
-                if (!logEl.TryGetProperty("topics", out var topicsEl)) return;
+                if (!logEl.TryGetProperty("address", out var addrEl))   return;
+                if (!logEl.TryGetProperty("topics",  out var topicsEl)) return;
 
                 var address = addrEl.GetString()?.ToLower() ?? "";
-                var topics = new List<string>();
+                var topics  = new List<string>();
 
                 foreach (var t in topicsEl.EnumerateArray())
                     topics.Add(t.GetString()?.ToLower() ?? "");
 
                 if (topics.Count == 0) return;
 
-                // Log RAW de todo lo que llega — para diagnóstico
                 Logger.Raw($"[WSS-RAW] address={address} | topic0={topics[0]}");
 
-                // Filtro manual: solo Aerodrome router + evento Swap
-                // if (address != AERODROME_ROUTER) return;
-                // if (topics[0] != TOPIC0_SWAP)    return;
-
-                // Filtro: solo eventos Swap de Aerodrome V2 Basic
+                // Filtro: solo Swap de Aerodrome V2 Basic
                 if (topics[0] != TOPIC0_SWAP_V2) return;
 
-                // Solo si involucra WETH (address del token o pool relacionado)
-                // Por ahora dejamos pasar todos los Swap V2 y filtramos después
-
-                // Extraer data del swap
                 var dataStr = logEl.TryGetProperty("data", out var dataEl)
                     ? dataEl.GetString() ?? ""
                     : "";
 
-                // Extraer sender desde topics[1] si existe
                 var sender = topics.Count > 1
                     ? "0x" + topics[1].Replace("0x", "").TrimStart('0').PadLeft(40, '0')
                     : "unknown";
 
-                // Extraer pool address del log (el address ES el pool en Aerodrome)
                 var poolAddress = address;
 
-                // Parseo básico de amounts desde data (primeros 2 slots de 32 bytes)
-                decimal amount0 = 0, amount1 = 0;
-                if (dataStr.Length >= 130)
+                // Parseo correcto Aerodrome V2 Basic:
+                // data = amount0In (32) + amount1In (32) + amount0Out (32) + amount1Out (32)
+                decimal amount0In = 0, amount1In = 0, amount0Out = 0, amount1Out = 0;
+                if (dataStr.Length >= 258)
                 {
-                    var hex0 = dataStr.Substring(2, 64);
-                    var hex1 = dataStr.Substring(66, 64);
-                    amount0 = ParseHexToDecimal(hex0);
-                    amount1 = ParseHexToDecimal(hex1);
+                    var clean  = dataStr.StartsWith("0x") ? dataStr[2..] : dataStr;
+                    amount0In  = ParseHexToDecimal(clean.Substring(0,   64));
+                    amount1In  = ParseHexToDecimal(clean.Substring(64,  64));
+                    amount0Out = ParseHexToDecimal(clean.Substring(128, 64));
+                    amount1Out = ParseHexToDecimal(clean.Substring(192, 64));
                 }
 
-                // Determinar dirección del swap (buy = amount0 negativo en Aerodrome V2)
-                bool isBuy = amount0 < 0;
+                // Buy  = entra token1 (WETH), sale token0 (el token nuevo)
+                // Sell = entra token0 (el token nuevo), sale token1 (WETH)
+                bool isBuy = amount1In > 0 && amount0In == 0;
 
                 var swapEvent = new SwapEvent
                 {
-                    PoolAddress = poolAddress,
-                    TokenAddress = poolAddress, // se enriquece después con DexScreener
+                    PoolAddress  = poolAddress,
+                    TokenAddress = poolAddress,
                     WalletSender = sender,
-                    AmountIn = Math.Abs(isBuy ? amount1 : amount0),
-                    AmountOut = Math.Abs(isBuy ? amount0 : amount1),
-                    IsBuy = isBuy,
-                    Timestamp = DateTime.UtcNow
+                    AmountIn     = isBuy ? amount1In  : amount0In,
+                    AmountOut    = isBuy ? amount0Out : amount1Out,
+                    IsBuy        = isBuy,
+                    Timestamp    = DateTime.UtcNow
                 };
 
                 Logger.Debug($"[SWAP] pool={poolAddress[..10]}... | " +
                              $"{(isBuy ? "BUY " : "SELL")} | " +
+                             $"in={swapEvent.AmountIn:F4} | out={swapEvent.AmountOut:F4} | " +
                              $"sender={sender[..10]}...");
 
                 _signalEngine.AddSwap(swapEvent);
@@ -178,11 +163,10 @@ namespace _15_5_SniperBot_SignalLayer.Services
         {
             try
             {
-                // Convertir hex de 32 bytes a decimal (valor aproximado en wei)
                 if (string.IsNullOrEmpty(hex)) return 0;
-                var big = System.Numerics.BigInteger.Parse("0" + hex,
+                var big = System.Numerics.BigInteger.Parse(
+                    "0" + hex,
                     System.Globalization.NumberStyles.HexNumber);
-                // Dividir por 1e18 para obtener valor en ETH aproximado
                 return (decimal)big / 1_000_000_000_000_000_000m;
             }
             catch { return 0; }
