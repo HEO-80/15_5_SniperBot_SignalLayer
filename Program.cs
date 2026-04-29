@@ -2,6 +2,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using DotNetEnv;
+using Nethereum.Web3;
 using _15_5_SniperBot_SignalLayer.Services;
 
 namespace _15_5_SniperBot_SignalLayer
@@ -87,6 +88,11 @@ namespace _15_5_SniperBot_SignalLayer
             var dexScreener    = new DexScreenerService();
             var poolProfileSvc = new PoolProfileService(dexScreener, minLiq, maxLiq, maxAgeHours, minPoolMins);
             var goPlus         = new GoPlusService();
+            var web3           = new Web3(httpUrl);
+            var callStatic     = new CallStaticService(web3);
+            var trading        = new TradingService(simMode);
+            var priceMonitor   = new PriceMonitorService(
+                dexScreener, tpPct, slPct, breakEvenTrigger, trailingPct);
 
             var signalEngine = new SignalEngine(
                 minSwaps30s, minSwaps120s, minRatio, minUniqueTraders,
@@ -95,7 +101,7 @@ namespace _15_5_SniperBot_SignalLayer
             );
             var wss = new WssConnectionService(wssUrl, signalEngine);
 
-            // ── Pipeline async: señal → pool profile → goplus ─────────────────
+            // ── Pipeline async ────────────────────────────────────────────────
             signalEngine.OnSignalDetected += async signal =>
             {
                 try
@@ -109,12 +115,30 @@ namespace _15_5_SniperBot_SignalLayer
                     stats.AddPassedPool();
 
                     // Fase 4 — GoPlus
-                    var isSafe = await goPlus.IsTokenSafeAsync(profile.TokenAddress, profile.Symbol);
+                    bool isSafe = await goPlus.IsTokenSafeAsync(profile.TokenAddress, profile.Symbol);
                     if (!isSafe) return;
                     stats.AddPassedGoPlus();
 
-                    // TODO Fase 5 — callStatic
-                    Logger.Success($"[PASA FILTROS] {profile.Symbol} | {profile}");
+                    // Fase 5 — callStatic
+                    bool tradable = await callStatic.IsTokenTradableAsync(
+                        profile.TokenAddress, profile.Symbol, amountEth);
+                    if (!tradable) return;
+                    stats.AddPassedCallStatic();
+
+                    // Fase 6 — Compra + Monitor
+                    Logger.Success($"[ENTRADA] {profile.Symbol} — ejecutando compra");
+                    decimal entryPrice = await trading.BuyAsync(
+                        profile.Symbol, profile.PoolAddress, amountEth, profile.PriceUsd);
+                    if (entryPrice == 0) return;
+                    stats.AddTradeExecuted();
+
+                    (string reason, decimal pnl) result = await priceMonitor.MonitorAsync(
+                        profile.Symbol, profile.PoolAddress, entryPrice, amountEth);
+
+                    if (result.reason == "take-profit")
+                        stats.AddTakeProfit(result.pnl * amountEth / 100m);
+                    else
+                        stats.AddStopLoss(result.pnl * amountEth / 100m);
                 }
                 catch (Exception ex)
                 {
@@ -122,7 +146,7 @@ namespace _15_5_SniperBot_SignalLayer
                 }
             };
 
-            // ── Arrancar WSS en background ────────────────────────────────────
+            // ── Arrancar WSS ──────────────────────────────────────────────────
             var cts     = new CancellationTokenSource();
             var wssTask = Task.Run(() => wss.StartListeningAsync(cts.Token));
 
