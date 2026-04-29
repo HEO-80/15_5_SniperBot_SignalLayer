@@ -34,29 +34,29 @@ namespace _15_5_SniperBot_SignalLayer
                 int.TryParse(Environment.GetEnvironmentVariable(key), out var v) ? v : def;
 
             // ── Config ────────────────────────────────────────────────────────
-            string wssUrl     = Environment.GetEnvironmentVariable("WSS_RPC_URL")  ?? "";
-            string httpUrl    = Environment.GetEnvironmentVariable("HTTP_RPC_URL") ?? "";
-            string privateKey = Environment.GetEnvironmentVariable("PRIVATE_KEY")  ?? "";
-            bool   simMode    = GetBool("SIMULATION_MODE", true);
+            string wssUrl = Environment.GetEnvironmentVariable("WSS_RPC_URL") ?? "";
+            string httpUrl = Environment.GetEnvironmentVariable("HTTP_RPC_URL") ?? "";
+            string privateKey = Environment.GetEnvironmentVariable("PRIVATE_KEY") ?? "";
+            bool simMode = GetBool("SIMULATION_MODE", true);
 
             if (string.IsNullOrEmpty(httpUrl) && !string.IsNullOrEmpty(wssUrl))
                 httpUrl = wssUrl.Replace("wss://", "https://");
 
-            decimal amountEth        = GetDec("AMOUNT_ETH_PER_TRADE",   0.005m);
-            decimal tpPct            = GetDec("TP_PERCENTAGE",           40m);
-            decimal slPct            = GetDec("SL_PERCENTAGE",           15m);
-            decimal breakEvenTrigger = GetDec("BREAK_EVEN_TRIGGER",      15m);
-            decimal trailingPct      = GetDec("TRAILING_STOP_PERCENT",   10m);
-            int     minSwaps30s      = GetInt("MIN_SWAPS_30S",           2);
-            int     minSwaps120s     = GetInt("MIN_SWAPS_120S",          4);
-            decimal minRatio         = GetDec("MIN_BUY_SELL_RATIO",      1.5m);
-            int     minUniqueTraders = GetInt("MIN_UNIQUE_TRADERS_60S",  2);
-            decimal minLiq           = GetDec("MIN_LIQUIDITY_USD",       5000m);
-            decimal maxLiq           = GetDec("MAX_LIQUIDITY_USD",       500000m);
-            double  maxAgeHours      = GetDbl("MAX_TOKEN_AGE_HOURS",     24.0);
-            double  minPoolMins      = GetDbl("MIN_POOL_AGE_MINUTES",    3.0);
-            decimal gasBuyEth        = GetDec("GAS_COST_BUY_ETH",       0.00001m);
-            decimal gasSellEth       = GetDec("GAS_COST_SELL_ETH",      0.00001m);
+            decimal amountEth = GetDec("AMOUNT_ETH_PER_TRADE", 0.005m);
+            decimal tpPct = GetDec("TP_PERCENTAGE", 40m);
+            decimal slPct = GetDec("SL_PERCENTAGE", 15m);
+            decimal breakEvenTrigger = GetDec("BREAK_EVEN_TRIGGER", 15m);
+            decimal trailingPct = GetDec("TRAILING_STOP_PERCENT", 10m);
+            int minSwaps30s = GetInt("MIN_SWAPS_30S", 2);
+            int minSwaps120s = GetInt("MIN_SWAPS_120S", 4);
+            decimal minRatio = GetDec("MIN_BUY_SELL_RATIO", 1.5m);
+            int minUniqueTraders = GetInt("MIN_UNIQUE_TRADERS_60S", 2);
+            decimal minLiq = GetDec("MIN_LIQUIDITY_USD", 5000m);
+            decimal maxLiq = GetDec("MAX_LIQUIDITY_USD", 500000m);
+            double maxAgeHours = GetDbl("MAX_TOKEN_AGE_HOURS", 24.0);
+            double minPoolMins = GetDbl("MIN_POOL_AGE_MINUTES", 3.0);
+            decimal gasBuyEth = GetDec("GAS_COST_BUY_ETH", 0.00001m);
+            decimal gasSellEth = GetDec("GAS_COST_SELL_ETH", 0.00001m);
 
             // ── Banner ────────────────────────────────────────────────────────
             Console.ForegroundColor = ConsoleColor.Magenta;
@@ -84,15 +84,24 @@ namespace _15_5_SniperBot_SignalLayer
             Logger.Info("Iniciando Signal Engine y WSS...\n");
 
             // ── Servicios ─────────────────────────────────────────────────────
-            var stats          = new StatsTracker(gasBuyEth, gasSellEth);
-            var dexScreener    = new DexScreenerService();
+            var stats = new StatsTracker(gasBuyEth, gasSellEth);
+            var dexScreener = new DexScreenerService();
             var poolProfileSvc = new PoolProfileService(dexScreener, minLiq, maxLiq, maxAgeHours, minPoolMins);
-            var goPlus         = new GoPlusService();
-            var web3           = new Web3(httpUrl);
-            var callStatic     = new CallStaticService(web3);
-            var trading        = new TradingService(simMode);
-            var priceMonitor   = new PriceMonitorService(
+            var goPlus = new GoPlusService();
+            var web3 = new Web3(httpUrl);
+            var callStatic = new CallStaticService(web3);
+            var trading = new TradingService(simMode);
+            var priceMonitor = new PriceMonitorService(
                 dexScreener, tpPct, slPct, breakEvenTrigger, trailingPct);
+            bool postBuyEnabled = GetBool("POSTBUY_MONITORING_ENABLED", true);
+            int postBuyInitPct = GetInt("POSTBUY_INITIAL_SIZE_PCT", 25);
+            int postBuyWindowSec = GetInt("POSTBUY_WINDOW_SECONDS", 20);
+
+            var postBuy = new PostBuyMonitorService(
+                dexScreener, trading,
+                enabled: postBuyEnabled,
+                windowSeconds: postBuyWindowSec,
+                initialSizePct: postBuyInitPct);
 
             var signalEngine = new SignalEngine(
                 minSwaps30s, minSwaps120s, minRatio, minUniqueTraders,
@@ -127,8 +136,11 @@ namespace _15_5_SniperBot_SignalLayer
 
                     // Fase 6 — Compra + Monitor
                     Logger.Success($"[ENTRADA] {profile.Symbol} — ejecutando compra");
+                    // decimal entryPrice = await trading.BuyAsync(
+                    //     profile.Symbol, profile.PoolAddress, amountEth, profile.PriceUsd);
                     decimal entryPrice = await trading.BuyAsync(
-                        profile.Symbol, profile.PoolAddress, amountEth, profile.PriceUsd);
+profile.Symbol, profile.PoolAddress, amountEth, profile.PriceUsd);
+
                     if (entryPrice == 0) return;
                     stats.AddTradeExecuted();
 
@@ -147,7 +159,7 @@ namespace _15_5_SniperBot_SignalLayer
             };
 
             // ── Arrancar WSS ──────────────────────────────────────────────────
-            var cts     = new CancellationTokenSource();
+            var cts = new CancellationTokenSource();
             var wssTask = Task.Run(() => wss.StartListeningAsync(cts.Token));
 
             Logger.Info("Presiona ENTER para detener.");
