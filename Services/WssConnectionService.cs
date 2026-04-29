@@ -21,6 +21,17 @@ namespace _15_5_SniperBot_SignalLayer.Services
         // WETH en Base
         private const string WETH_BASE = "0x4200000000000000000000000000000000000006";
 
+        private static readonly HashSet<string> _blacklistedWallets = new(StringComparer.OrdinalIgnoreCase)
+{
+    "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
+    "0x2aa7d880b7ad5964c02b919074fb27a71a7ddd07",
+    "0x8f10b468b06c6fd214b65f87778827f7d113f996",
+    "0x7747f8d2a76bd6345cc29622a946a929647f2359",
+    "0x0ca4dbb82d67c51760ae608e4efb6369d31ed272",
+    "0x83d55acdc72027ed339d267eebaf9a41e47490d5",
+    "0x0bc9a56c3e2ff5b5a99f44534e1f9e98e0b6e7d1",
+    "0x0403795ead3079acfdd7d8d46cd2f134371e64e2",
+};
         public WssConnectionService(string wssUrl, SignalEngine signalEngine)
         {
             _wssUrl = wssUrl;
@@ -157,6 +168,12 @@ namespace _15_5_SniperBot_SignalLayer.Services
                              $"sender={sender}"); // <-- sin truncar
 
 
+// Filtrar wallets de arbitraje conocidas antes de enviar al Signal Engine
+if (_blacklistedWallets.Contains(sender))
+{
+    Logger.Raw($"[BLACKLIST] wallet={sender[..10]}... ignorada");
+    return;
+}
                 _signalEngine.AddSwap(swapEvent);
             }
             catch (Exception ex)
