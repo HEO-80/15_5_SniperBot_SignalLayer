@@ -15,7 +15,8 @@ namespace _15_5_SniperBot_SignalLayer
             Env.Load();
             Logger.Init();
 
-            Logger.MinLevel = LogLevel.DEBUG;
+            // Logger.MinLevel = LogLevel.DEBUG;
+            Logger.MinLevel = LogLevel.INFO;
 
             decimal GetDec(string key, decimal def) =>
                 decimal.TryParse(Environment.GetEnvironmentVariable(key),
