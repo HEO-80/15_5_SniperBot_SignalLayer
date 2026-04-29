@@ -18,6 +18,9 @@ namespace _15_5_SniperBot_SignalLayer.Services
             "0x4752ba5dbc9168f817c9f3a7c67b43a78b4ca23", // bot arbitraje dominante Base
             "0x2aa7d880e3a4a0cb677c72d76e2fa1c7c48c3a24",
             "0x8407699e07d8e5d8e8e0e8b4c8c8c8c8c8c8c8c8",
+            "0x07964f135f276412b3182a3b2407b8dd45000000",
+            "0x07057950d39cdd22516b5d2621feda9169457364",
+            "0xb9e9e795fd530314663f779f7f57950c6bc1eb4b",
         };
 
         private readonly int     _minSwaps30s;
@@ -26,13 +29,17 @@ namespace _15_5_SniperBot_SignalLayer.Services
         private readonly int     _minUniqueTraders;
         private readonly int     _cooldownSeconds;
         private readonly int     _minScore;
+        private readonly int     _maxTradesPerHour;
+
+        private int      _tradesThisHour = 0;
+        private DateTime _hourStart      = DateTime.UtcNow;
 
         public event Action<TokenSignal>? OnSignalDetected;
 
         public SignalEngine(
             int minSwaps30s, int minSwaps120s,
             decimal minRatio, int minUniqueTraders,
-            int cooldownSeconds = 90, int minScore = 2)
+            int cooldownSeconds = 90, int minScore = 1)
         {
             _minSwaps30s      = minSwaps30s;
             _minSwaps120s     = minSwaps120s;
@@ -40,6 +47,9 @@ namespace _15_5_SniperBot_SignalLayer.Services
             _minUniqueTraders = minUniqueTraders;
             _cooldownSeconds  = cooldownSeconds;
             _minScore         = minScore;
+
+            var envMax = Environment.GetEnvironmentVariable("MAX_TRADES_PER_HOUR");
+            _maxTradesPerHour = int.TryParse(envMax, out var v) ? v : 5;
         }
 
         public void AddSwap(SwapEvent swap)
@@ -138,6 +148,24 @@ namespace _15_5_SniperBot_SignalLayer.Services
 
             if (score < _minScore)
             { Logger.Reject($"{poolAddress[..10]}... | low_score ({score} < {_minScore})"); return; }
+
+            // ── Throttle Global ───────────────────────────────────────────────
+            lock (_lock)
+            {
+                if ((DateTime.UtcNow - _hourStart).TotalHours >= 1)
+                {
+                    _hourStart = DateTime.UtcNow;
+                    _tradesThisHour = 0;
+                }
+
+                if (_tradesThisHour >= _maxTradesPerHour)
+                {
+                    Logger.Reject($"{poolAddress[..10]}... | global_throttle — max trades/hora alcanzado ({_tradesThisHour} >= {_maxTradesPerHour})");
+                    return;
+                }
+
+                _tradesThisHour++;
+            }
 
             // ── Señal válida ──────────────────────────────────────────────────
             _cooldowns[poolAddress] = DateTime.UtcNow;

@@ -15,8 +15,8 @@ namespace _15_5_SniperBot_SignalLayer
             Env.Load();
             Logger.Init();
 
-            // Logger.MinLevel = LogLevel.DEBUG;
-            Logger.MinLevel = LogLevel.INFO;
+            Logger.MinLevel = LogLevel.DEBUG;
+            // Logger.MinLevel = LogLevel.INFO;
 
             decimal GetDec(string key, decimal def) =>
                 decimal.TryParse(Environment.GetEnvironmentVariable(key),
@@ -48,8 +48,8 @@ namespace _15_5_SniperBot_SignalLayer
             decimal slPct = GetDec("SL_PERCENTAGE", 15m);
             decimal breakEvenTrigger = GetDec("BREAK_EVEN_TRIGGER", 15m);
             decimal trailingPct = GetDec("TRAILING_STOP_PERCENT", 10m);
-            int minSwaps30s = GetInt("MIN_SWAPS_30S", 2);
-            int minSwaps120s = GetInt("MIN_SWAPS_120S", 4);
+            int minSwaps30s = GetInt("MIN_SWAPS_30S", 1);
+            int minSwaps120s = GetInt("MIN_SWAPS_120S", 3);
             decimal minRatio = GetDec("MIN_BUY_SELL_RATIO", 1.5m);
             int minUniqueTraders = GetInt("MIN_UNIQUE_TRADERS_60S", 2);
             decimal minLiq = GetDec("MIN_LIQUIDITY_USD", 5000m);
@@ -107,7 +107,7 @@ namespace _15_5_SniperBot_SignalLayer
             var signalEngine = new SignalEngine(
                 minSwaps30s, minSwaps120s, minRatio, minUniqueTraders,
                 cooldownSeconds: 90,
-                minScore: 2
+                minScore: 1
             );
             var wss = new WssConnectionService(wssUrl, signalEngine);
 
