@@ -23,7 +23,7 @@ namespace _15_5_SniperBot_SignalLayer.Services
 
         public WssConnectionService(string wssUrl, SignalEngine signalEngine)
         {
-            _wssUrl       = wssUrl;
+            _wssUrl = wssUrl;
             _signalEngine = signalEngine;
         }
 
@@ -53,8 +53,8 @@ namespace _15_5_SniperBot_SignalLayer.Services
             var subscribeMsg = JsonSerializer.Serialize(new
             {
                 jsonrpc = "2.0",
-                id      = 1,
-                method  = "eth_subscribe",
+                id = 1,
+                method = "eth_subscribe",
                 @params = new object[] { "logs", new { } }
             });
 
@@ -93,11 +93,11 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 if (!root.TryGetProperty("params", out var paramsEl)) return;
                 if (!paramsEl.TryGetProperty("result", out var logEl)) return;
 
-                if (!logEl.TryGetProperty("address", out var addrEl))   return;
-                if (!logEl.TryGetProperty("topics",  out var topicsEl)) return;
+                if (!logEl.TryGetProperty("address", out var addrEl)) return;
+                if (!logEl.TryGetProperty("topics", out var topicsEl)) return;
 
                 var address = addrEl.GetString()?.ToLower() ?? "";
-                var topics  = new List<string>();
+                var topics = new List<string>();
 
                 foreach (var t in topicsEl.EnumerateArray())
                     topics.Add(t.GetString()?.ToLower() ?? "");
@@ -124,9 +124,9 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 decimal amount0In = 0, amount1In = 0, amount0Out = 0, amount1Out = 0;
                 if (dataStr.Length >= 258)
                 {
-                    var clean  = dataStr.StartsWith("0x") ? dataStr[2..] : dataStr;
-                    amount0In  = ParseHexToDecimal(clean.Substring(0,   64));
-                    amount1In  = ParseHexToDecimal(clean.Substring(64,  64));
+                    var clean = dataStr.StartsWith("0x") ? dataStr[2..] : dataStr;
+                    amount0In = ParseHexToDecimal(clean.Substring(0, 64));
+                    amount1In = ParseHexToDecimal(clean.Substring(64, 64));
                     amount0Out = ParseHexToDecimal(clean.Substring(128, 64));
                     amount1Out = ParseHexToDecimal(clean.Substring(192, 64));
                 }
@@ -137,19 +137,25 @@ namespace _15_5_SniperBot_SignalLayer.Services
 
                 var swapEvent = new SwapEvent
                 {
-                    PoolAddress  = poolAddress,
+                    PoolAddress = poolAddress,
                     TokenAddress = poolAddress,
                     WalletSender = sender,
-                    AmountIn     = isBuy ? amount1In  : amount0In,
-                    AmountOut    = isBuy ? amount0Out : amount1Out,
-                    IsBuy        = isBuy,
-                    Timestamp    = DateTime.UtcNow
+                    AmountIn = isBuy ? amount1In : amount0In,
+                    AmountOut = isBuy ? amount0Out : amount1Out,
+                    IsBuy = isBuy,
+                    Timestamp = DateTime.UtcNow
                 };
+
+                // Logger.Debug($"[SWAP] pool={poolAddress[..10]}... | " +
+                //              $"{(isBuy ? "BUY " : "SELL")} | " +
+                //              $"in={swapEvent.AmountIn:F4} | out={swapEvent.AmountOut:F4} | " +
+                //              $"sender={sender[..10]}...");
 
                 Logger.Debug($"[SWAP] pool={poolAddress[..10]}... | " +
                              $"{(isBuy ? "BUY " : "SELL")} | " +
                              $"in={swapEvent.AmountIn:F4} | out={swapEvent.AmountOut:F4} | " +
-                             $"sender={sender[..10]}...");
+                             $"sender={sender}"); // <-- sin truncar
+
 
                 _signalEngine.AddSwap(swapEvent);
             }
