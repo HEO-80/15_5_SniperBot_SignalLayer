@@ -14,7 +14,6 @@ namespace _15_5_SniperBot_SignalLayer
             Env.Load();
             Logger.Init();
 
-            // Logger.MinLevel = LogLevel.INFO;
             Logger.MinLevel = LogLevel.DEBUG;
 
             decimal GetDec(string key, decimal def) =>
@@ -34,27 +33,29 @@ namespace _15_5_SniperBot_SignalLayer
                 int.TryParse(Environment.GetEnvironmentVariable(key), out var v) ? v : def;
 
             // ── Config ────────────────────────────────────────────────────────
-            string wssUrl = Environment.GetEnvironmentVariable("WSS_RPC_URL") ?? "";
-            string httpUrl = Environment.GetEnvironmentVariable("HTTP_RPC_URL") ?? "";
-            string privateKey = Environment.GetEnvironmentVariable("PRIVATE_KEY") ?? "";
-            bool simMode = GetBool("SIMULATION_MODE", true);
+            string wssUrl     = Environment.GetEnvironmentVariable("WSS_RPC_URL")  ?? "";
+            string httpUrl    = Environment.GetEnvironmentVariable("HTTP_RPC_URL") ?? "";
+            string privateKey = Environment.GetEnvironmentVariable("PRIVATE_KEY")  ?? "";
+            bool   simMode    = GetBool("SIMULATION_MODE", true);
 
             if (string.IsNullOrEmpty(httpUrl) && !string.IsNullOrEmpty(wssUrl))
                 httpUrl = wssUrl.Replace("wss://", "https://");
 
-            decimal amountEth = GetDec("AMOUNT_ETH_PER_TRADE", 0.005m);
-            decimal tpPct = GetDec("TP_PERCENTAGE", 40m);
-            decimal slPct = GetDec("SL_PERCENTAGE", 15m);
-            decimal breakEvenTrigger = GetDec("BREAK_EVEN_TRIGGER", 15m);
-            decimal trailingPct = GetDec("TRAILING_STOP_PERCENT", 10m);
-            int minSwaps30s = GetInt("MIN_SWAPS_30S", 3);
-            int minSwaps120s = GetInt("MIN_SWAPS_120S", 8);
-            decimal minRatio = GetDec("MIN_BUY_SELL_RATIO", 2.0m);
-            int minUniqueTraders = GetInt("MIN_UNIQUE_TRADERS_60S", 5);
-            decimal minLiq = GetDec("MIN_LIQUIDITY_USD", 5000m);
-            decimal maxLiq = GetDec("MAX_LIQUIDITY_USD", 500000m);
-            decimal gasBuyEth = GetDec("GAS_COST_BUY_ETH", 0.00001m);
-            decimal gasSellEth = GetDec("GAS_COST_SELL_ETH", 0.00001m);
+            decimal amountEth        = GetDec("AMOUNT_ETH_PER_TRADE",   0.005m);
+            decimal tpPct            = GetDec("TP_PERCENTAGE",           40m);
+            decimal slPct            = GetDec("SL_PERCENTAGE",           15m);
+            decimal breakEvenTrigger = GetDec("BREAK_EVEN_TRIGGER",      15m);
+            decimal trailingPct      = GetDec("TRAILING_STOP_PERCENT",   10m);
+            int     minSwaps30s      = GetInt("MIN_SWAPS_30S",           2);
+            int     minSwaps120s     = GetInt("MIN_SWAPS_120S",          4);
+            decimal minRatio         = GetDec("MIN_BUY_SELL_RATIO",      1.5m);
+            int     minUniqueTraders = GetInt("MIN_UNIQUE_TRADERS_60S",  2);
+            decimal minLiq           = GetDec("MIN_LIQUIDITY_USD",       5000m);
+            decimal maxLiq           = GetDec("MAX_LIQUIDITY_USD",       500000m);
+            double  maxAgeHours      = GetDbl("MAX_TOKEN_AGE_HOURS",     24.0);
+            double  minPoolMins      = GetDbl("MIN_POOL_AGE_MINUTES",    3.0);
+            decimal gasBuyEth        = GetDec("GAS_COST_BUY_ETH",       0.00001m);
+            decimal gasSellEth       = GetDec("GAS_COST_SELL_ETH",      0.00001m);
 
             // ── Banner ────────────────────────────────────────────────────────
             Console.ForegroundColor = ConsoleColor.Magenta;
@@ -78,10 +79,14 @@ namespace _15_5_SniperBot_SignalLayer
             Logger.Info($"RPC (WSS)     : {wssUrl[..Math.Min(50, wssUrl.Length)]}...");
             Logger.Info($"Capital/trade : {amountEth} ETH  |  TP: +{tpPct}%  |  SL: -{slPct}%");
             Logger.Info($"Signal Engine : swaps30>={minSwaps30s} | swaps120>={minSwaps120s} | ratio>={minRatio} | wallets>={minUniqueTraders}");
+            Logger.Info($"Pool filters  : liq=${minLiq:N0}-${maxLiq:N0} | age={minPoolMins}min-{maxAgeHours}h");
             Logger.Info("Iniciando Signal Engine y WSS...\n");
 
             // ── Servicios ─────────────────────────────────────────────────────
-            var stats = new StatsTracker(gasBuyEth, gasSellEth);
+            var stats          = new StatsTracker(gasBuyEth, gasSellEth);
+            var dexScreener    = new DexScreenerService();
+            var poolProfileSvc = new PoolProfileService(dexScreener, minLiq, maxLiq, maxAgeHours, minPoolMins);
+            var goPlus         = new GoPlusService();
 
             var signalEngine = new SignalEngine(
                 minSwaps30s, minSwaps120s, minRatio, minUniqueTraders,
@@ -90,16 +95,35 @@ namespace _15_5_SniperBot_SignalLayer
             );
             var wss = new WssConnectionService(wssUrl, signalEngine);
 
-            // Cuando el Signal Engine detecta señal válida → loguear
-            signalEngine.OnSignalDetected += signal =>
+            // ── Pipeline async: señal → pool profile → goplus ─────────────────
+            signalEngine.OnSignalDetected += async signal =>
             {
-                stats.AddSignalDetected();
-                Logger.Success($"[CANDIDATO] Pool: {signal.PoolAddress} | {signal}");
-                // TODO Fase 3+: pool profile → GoPlus → callStatic → trade
+                try
+                {
+                    stats.AddSignalDetected();
+                    Logger.Success($"[CANDIDATO] {signal.PoolAddress[..10]}... | {signal}");
+
+                    // Fase 3 — Pool Profile
+                    var profile = await poolProfileSvc.EvaluateAsync(signal);
+                    if (profile == null) return;
+                    stats.AddPassedPool();
+
+                    // Fase 4 — GoPlus
+                    var isSafe = await goPlus.IsTokenSafeAsync(profile.TokenAddress, profile.Symbol);
+                    if (!isSafe) return;
+                    stats.AddPassedGoPlus();
+
+                    // TODO Fase 5 — callStatic
+                    Logger.Success($"[PASA FILTROS] {profile.Symbol} | {profile}");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"[PIPELINE] Error: {ex.Message}");
+                }
             };
 
             // ── Arrancar WSS en background ────────────────────────────────────
-            var cts = new CancellationTokenSource();
+            var cts     = new CancellationTokenSource();
             var wssTask = Task.Run(() => wss.StartListeningAsync(cts.Token));
 
             Logger.Info("Presiona ENTER para detener.");

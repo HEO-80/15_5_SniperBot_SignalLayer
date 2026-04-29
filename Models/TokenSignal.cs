@@ -9,6 +9,7 @@ namespace _15_5_SniperBot_SignalLayer.Models
         public int    Buys60s       { get; set; }
         public int    Sells60s      { get; set; }
         public int    UniqueWallets { get; set; }
+        public string TokenSymbol { get; set; } = "";
         public decimal BuySellRatio => Sells60s == 0 ? Buys60s : (decimal)Buys60s / Sells60s;
         public DateTime LastSeen    { get; set; } = DateTime.UtcNow;
 
