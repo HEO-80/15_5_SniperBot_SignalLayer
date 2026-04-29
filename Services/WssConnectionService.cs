@@ -31,6 +31,7 @@ namespace _15_5_SniperBot_SignalLayer.Services
     "0x83d55acdc72027ed339d267eebaf9a41e47490d5",
     "0x0bc9a56c3e2ff5b5a99f44534e1f9e98e0b6e7d1",
     "0x0403795ead3079acfdd7d8d46cd2f134371e64e2",
+    "0x4a012af2b05616fb390ed32452641c3f04633bb5",
 };
         public WssConnectionService(string wssUrl, SignalEngine signalEngine)
         {
