@@ -58,6 +58,24 @@ namespace _15_5_SniperBot_SignalLayer
             double minPoolMins = GetDbl("MIN_POOL_AGE_MINUTES", 3.0);
             decimal gasBuyEth = GetDec("GAS_COST_BUY_ETH", 0.00001m);
             decimal gasSellEth = GetDec("GAS_COST_SELL_ETH", 0.00001m);
+            int startHour = GetInt("TRADING_HOUR_START", 9);
+            int endHour = GetInt("TRADING_HOUR_END", 19);
+
+            // ── Control de Horario (UTC+2) ────────────────────────────────────
+            Func<DateTime> getSpainTime = () => DateTime.UtcNow.AddHours(2);
+            var nowSpain = getSpainTime();
+
+            if (nowSpain.Hour < startHour || nowSpain.Hour >= endHour)
+            {
+                Logger.Warning($"Fuera de horario de trading ({startHour}:00 - {endHour}:00). Hora actual: {nowSpain:HH:mm}");
+                Logger.Info("Esperando a que abra el mercado...");
+
+                while (getSpainTime().Hour < startHour || getSpainTime().Hour >= endHour)
+                {
+                    await Task.Delay(60000); // Check every minute
+                }
+                Logger.Success("Mercado abierto. Iniciando...");
+            }
 
             // ── Banner ────────────────────────────────────────────────────────
             Console.ForegroundColor = ConsoleColor.Magenta;
@@ -163,7 +181,22 @@ profile.Symbol, profile.PoolAddress, amountEth, profile.PriceUsd);
             var cts = new CancellationTokenSource();
             var wssTask = Task.Run(() => wss.StartListeningAsync(cts.Token));
 
-            Logger.Info("Presiona ENTER para detener.");
+            // ── Monitor de Cierre de Sesión ───────────────────────────────────
+            _ = Task.Run(async () =>
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    if (getSpainTime().Hour >= endHour)
+                    {
+                        Logger.Info($"Sesión finalizada ({endHour}:00). Cerrando bot...");
+                        cts.Cancel();
+                        break;
+                    }
+                    await Task.Delay(60000); // Check every minute
+                }
+            });
+
+            Logger.Info("Presiona ENTER para detener manualmente.");
             Console.ReadLine();
 
             cts.Cancel();

@@ -13,6 +13,7 @@ namespace _15_5_SniperBot_SignalLayer.Services
     {
         private readonly string _wssUrl;
         private readonly SignalEngine _signalEngine;
+        private int _eventCounter = 0;
 
         // Aerodrome V2 Basic — topic0 evento Swap
         // Swap(address sender, address to, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out)
@@ -20,6 +21,8 @@ namespace _15_5_SniperBot_SignalLayer.Services
 
         // WETH en Base
         private const string WETH_BASE = "0x4200000000000000000000000000000000000006";
+
+        private const decimal MIN_SWAP_USD = 50m;
 
         private static readonly HashSet<string> _blacklistedWallets = new(StringComparer.OrdinalIgnoreCase)
 {
@@ -44,16 +47,33 @@ namespace _15_5_SniperBot_SignalLayer.Services
 
         public async Task StartListeningAsync(CancellationToken ct = default)
         {
+            int retryCount = 0;
             while (!ct.IsCancellationRequested)
             {
+                DateTime startTime = DateTime.UtcNow;
                 try
                 {
                     await ConnectAndListenAsync(ct);
+                    // Si llegamos aquí sin excepción, la conexión se cerró normalmente o terminó
+                    retryCount = 0;
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"[WSS] Conexión perdida: {ex.Message} — reconectando en 5s...");
-                    await Task.Delay(5000, ct);
+                    // Si la conexión duró más de 5 minutos, reseteamos el contador de reintentos
+                    if ((DateTime.UtcNow - startTime).TotalMinutes >= 5)
+                        retryCount = 0;
+
+                    retryCount++;
+                    int delaySeconds = retryCount switch
+                    {
+                        1 => 5,
+                        2 => 10,
+                        3 => 20,
+                        _ => 60
+                    };
+
+                    Logger.Error($"[WSS] Conexión perdida: {ex.Message} — reconectando en {delaySeconds}s (intento {retryCount})...");
+                    await Task.Delay(delaySeconds * 1000, ct);
                 }
             }
         }
@@ -124,6 +144,9 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 // Filtro: solo Swap de Aerodrome V2 Basic
                 if (topics[0] != TOPIC0_SWAP_V2) return;
 
+                // Throttle de eventos — procesar solo 1 de cada 3 swaps
+                if (++_eventCounter % 3 != 0) return;
+
                 var dataStr = logEl.TryGetProperty("data", out var dataEl)
                     ? dataEl.GetString() ?? ""
                     : "";
@@ -150,21 +173,22 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 // Sell = entra token0 (el token nuevo), sale token1 (WETH)
                 bool isBuy = amount1In > 0 && amount0In == 0;
 
+                var ethPrice = 2500m;
+                var amountIn = isBuy ? amount1In : amount0In;
+                var amountOut = isBuy ? amount0Out : amount1Out;
+                var amountInUsd = isBuy ? (amountIn * ethPrice) : (amountOut * ethPrice);
+
                 var swapEvent = new SwapEvent
                 {
                     PoolAddress = poolAddress,
                     TokenAddress = poolAddress,
                     WalletSender = sender,
-                    AmountIn = isBuy ? amount1In : amount0In,
-                    AmountOut = isBuy ? amount0Out : amount1Out,
+                    AmountIn = amountIn,
+                    AmountInUsd = amountInUsd,
+                    AmountOut = amountOut,
                     IsBuy = isBuy,
                     Timestamp = DateTime.UtcNow
                 };
-
-                // Logger.Debug($"[SWAP] pool={poolAddress[..10]}... | " +
-                //              $"{(isBuy ? "BUY " : "SELL")} | " +
-                //              $"in={swapEvent.AmountIn:F4} | out={swapEvent.AmountOut:F4} | " +
-                //              $"sender={sender[..10]}...");
 
                 // Filtrar wallets de arbitraje ANTES de loguear y de enviar al Signal Engine
                 if (_blacklistedWallets.Contains(sender))
@@ -173,10 +197,17 @@ namespace _15_5_SniperBot_SignalLayer.Services
                     return;
                 }
 
+                // Filtro de tamaño mínimo para eliminar ruido/dust
+                if (swapEvent.AmountInUsd < MIN_SWAP_USD)
+                {
+                    Logger.Raw($"[SKIP] swap demasiado pequeño: ${swapEvent.AmountInUsd:F2}");
+                    return;
+                }
+
                 Logger.Debug($"[SWAP] pool={poolAddress[..10]}... | " +
                              $"{(isBuy ? "BUY " : "SELL")} | " +
-                             $"in={swapEvent.AmountIn:F4} | out={swapEvent.AmountOut:F4} | " +
-                             $"sender={sender}"); // <-- sin truncar
+                             $"in={swapEvent.AmountIn:F4} (${swapEvent.AmountInUsd:F2}) | out={swapEvent.AmountOut:F4} | " +
+                             $"sender={sender}");
 
 
                 _signalEngine.AddSwap(swapEvent);
