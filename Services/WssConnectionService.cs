@@ -162,18 +162,19 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 //              $"in={swapEvent.AmountIn:F4} | out={swapEvent.AmountOut:F4} | " +
                 //              $"sender={sender[..10]}...");
 
+                // Filtrar wallets de arbitraje ANTES de loguear y de enviar al Signal Engine
+                if (_blacklistedWallets.Contains(sender))
+                {
+                    Logger.Raw($"[BLACKLIST] wallet={sender[..10]}... ignorada");
+                    return;
+                }
+
                 Logger.Debug($"[SWAP] pool={poolAddress[..10]}... | " +
                              $"{(isBuy ? "BUY " : "SELL")} | " +
                              $"in={swapEvent.AmountIn:F4} | out={swapEvent.AmountOut:F4} | " +
                              $"sender={sender}"); // <-- sin truncar
 
 
-// Filtrar wallets de arbitraje conocidas antes de enviar al Signal Engine
-if (_blacklistedWallets.Contains(sender))
-{
-    Logger.Raw($"[BLACKLIST] wallet={sender[..10]}... ignorada");
-    return;
-}
                 _signalEngine.AddSwap(swapEvent);
             }
             catch (Exception ex)
