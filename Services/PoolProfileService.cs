@@ -36,10 +36,10 @@ namespace _15_5_SniperBot_SignalLayer.Services
                 return null;
             }
 
-            // Par WETH obligatorio
-            if (!profile.HasWeth)
+            // Par WETH o USDC obligatorio
+            if (!profile.HasWeth && !profile.HasUsdc)
             {
-                Logger.Reject($"{profile.Symbol} | no_weth_pair");
+                Logger.Reject($"{profile.Symbol} | no_weth_or_usdc_pair");
                 return null;
             }
 

@@ -63,6 +63,13 @@ namespace _15_5_SniperBot_SignalLayer.Services
                     "0x4200000000000000000000000000000000000006",
                     StringComparison.OrdinalIgnoreCase);
 
+                bool hasUsdc   = quoteAddr.Equals(
+                    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+                    StringComparison.OrdinalIgnoreCase)
+                    || tokenAddr.Equals(
+                    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+                    StringComparison.OrdinalIgnoreCase);
+
                 var volume24h  = pair.TryGetProperty("volume", out var vol)
                     && vol.TryGetProperty("h24", out var v24)
                     ? v24.GetDecimal() : 0;
@@ -79,6 +86,7 @@ namespace _15_5_SniperBot_SignalLayer.Services
                     LiquidityUsd   = liquidity,
                     AgeMinutes     = ageMinutes,
                     HasWeth        = hasWeth,
+                    HasUsdc        = hasUsdc,
                     Volume24h      = volume24h,
                     PriceUsd       = priceUsd,
                     PriceChange5m  = priceChange5m
@@ -100,12 +108,13 @@ namespace _15_5_SniperBot_SignalLayer.Services
         public decimal LiquidityUsd  { get; set; }
         public double  AgeMinutes    { get; set; }
         public bool    HasWeth       { get; set; }
+        public bool    HasUsdc       { get; set; }
         public decimal Volume24h     { get; set; }
         public decimal PriceUsd      { get; set; }
         public decimal PriceChange5m { get; set; }
 
         public override string ToString() =>
             $"liq=${LiquidityUsd:N0} | age={AgeMinutes:F0}min | " +
-            $"weth={HasWeth} | vol24h=${Volume24h:N0} | Δ5m={PriceChange5m:F1}%";
+            $"pair={(HasWeth ? "WETH" : HasUsdc ? "USDC" : "??")} | vol24h=${Volume24h:N0} | Δ5m={PriceChange5m:F1}%";
     }
 }

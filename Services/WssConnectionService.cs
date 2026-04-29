@@ -197,10 +197,10 @@ namespace _15_5_SniperBot_SignalLayer.Services
                     return;
                 }
 
-                // Filtro de tamaño mínimo para eliminar ruido/dust
-                if (swapEvent.AmountInUsd < MIN_SWAP_USD)
+                // Filtro de rango para eliminar ruido/dust y errores de parsing
+                if (swapEvent.AmountInUsd < 50m || swapEvent.AmountInUsd > 500_000m)
                 {
-                    Logger.Raw($"[SKIP] swap demasiado pequeño: ${swapEvent.AmountInUsd:F2}");
+                    Logger.Raw($"[SKIP] swap fuera de rango: ${swapEvent.AmountInUsd:F0}");
                     return;
                 }
 
